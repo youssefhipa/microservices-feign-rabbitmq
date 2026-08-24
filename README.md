@@ -1,29 +1,71 @@
-# Task 04 — Micro-communications (CourseHub mini)
+# Microservices: OpenFeign + RabbitMQ (CourseHub mini)
 
-A three-service mini-platform that practises the two core patterns from Lab 8:
-**OpenFeign** for one synchronous service-to-service call, and **RabbitMQ** for
-one asynchronous publish / subscribe.
+A three-service Spring Boot microservices platform demonstrating the two
+core inter-service communication patterns: a **synchronous call via
+OpenFeign** and an **asynchronous event via RabbitMQ**. Built for a
+massively-scalable-applications course module on service-to-service
+communication.
 
-## Stack
-- JDK 25, Spring Boot 4.0.3, Spring Cloud 2025.1.1
-- PostgreSQL 17, RabbitMQ 4.2-management
-- Maven multi-module
+## Scenario
 
-## Modules
-| Module | Port | Status |
-|---|---|---|
-| `course-service` | 8081 | Fully implemented — exposes the Feign endpoints |
-| `enrollment-service` | 8082 | Partial — you add the Feign client and the publisher |
-| `notification-service` | 8083 | Partial — you add the listener |
+A student enrolls in a course section:
+
+1. `enrollment-service` receives the enrollment request and calls
+   `course-service` synchronously (OpenFeign) to reserve a seat and get
+   the tuition price.
+2. Once confirmed, `enrollment-service` publishes an `EnrollmentConfirmed`
+   event to RabbitMQ.
+3. `notification-service` consumes that event asynchronously and logs a
+   (stubbed) confirmation notification — decoupled from the request path.
+
+## Services
+
+| Service                | Port | Role                                                          |
+|-------------------------|------|-----------------------------------------------------------------|
+| `course-service`        | 8081 | Owns course sections; exposes a reserve-seat endpoint consumed via Feign |
+| `enrollment-service`    | 8082 | Creates enrollments, calls `course-service` via `CourseClient` (OpenFeign), publishes `EnrollmentConfirmedEvent` |
+| `notification-service`  | 8083 | Listens on the RabbitMQ queue and logs a notification stub |
+
+## Tech stack
+
+- Java 25, Spring Boot 4, Spring Cloud (OpenFeign)
+- PostgreSQL (one database per service)
+- RabbitMQ (topic exchange / routing key)
+- Maven multi-module build
+- Docker / Docker Compose
+
+## Key code
+
+- `enrollment-service/.../feign/CourseClient.java` — declarative Feign
+  client calling `POST /api/courses/sections/{id}/reserve` on
+  `course-service`
+- `enrollment-service/.../messaging/EnrollmentPublisher.java` — publishes
+  the confirmation event to the RabbitMQ exchange
+- `notification-service/.../messaging/EnrollmentConfirmedListener.java` —
+  `@RabbitListener` consuming the event
+- `*/config/RabbitTopologyConfig.java` — exchange/queue/binding
+  declarations, shared topology between publisher and consumer
 
 ## Quick start
+
 ```bash
 docker compose up -d postgres rabbitmq
 mvn clean install -DskipTests
-# then start services from the IDE, or:
 docker compose up --build
 ```
 
-RabbitMQ UI: http://localhost:15672 (guest / guest).
+RabbitMQ management UI: http://localhost:15672 (guest / guest).
 
-See `Task4.tex` for the full task spec.
+## Try it
+
+```bash
+# reserve/check a section directly on course-service
+curl http://localhost:8081/api/courses/sections/1
+
+# create an enrollment (triggers the Feign call + RabbitMQ event)
+curl -X POST http://localhost:8082/api/enrollments \
+  -H "Content-Type: application/json" \
+  -d '{"studentId":1,"sectionId":1}'
+
+# watch the notification-service logs for the consumed event
+```
